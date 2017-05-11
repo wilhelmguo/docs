@@ -216,7 +216,7 @@ data:
 {
 	"auths": {
 		"image-test": {
-			"auth": "cm9vdDpyb290",   #  密文为"root:rootbase64"的结果
+			"auth": "cm9vdDpyb290",   #  密文为"root:root"base64的结果
 			"email": ""
 		}
 	}
