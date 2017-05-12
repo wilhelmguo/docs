@@ -1,7 +1,22 @@
 # Kubernetes ConfigMap vs Secret 
 @(Kubernetes)[ConfigMap|Secret]
 
-[TOC]
+   * [Kubernetes ConfigMap vs Secret](#kubernetes-configmap-vs-secret)
+      * [场景对比](#场景对比)
+      * [使用示例：](#使用示例)
+         * [ConfigMap：](#configmap)
+            * [创建ConfigMap](#创建configmap)
+            * [使用方式：](#使用方式)
+               * [1.填充环境变量](#1填充环境变量)
+               * [2.设置容器启动命令行参数](#2设置容器启动命令行参数)
+               * [3.挂载ConfigMap到文件](#3挂载configmap到文件)
+         * [Secret:](#secret)
+            * [创建Secret](#创建secret)
+            * [使用方式：](#使用方式-1)
+               * [1.挂载到文件](#1挂载到文件)
+               * [2.通过环境变量使用](#2通过环境变量使用)
+               * [3.拉取镜像](#3拉取镜像)
+            * [实际使用例子（挂载证书文件）：](#实际使用例子挂载证书文件)
 
 
 ## 场景对比
