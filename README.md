@@ -10,6 +10,7 @@
                * [1.填充环境变量](#1填充环境变量)
                * [2.设置容器启动命令行参数](#2设置容器启动命令行参数)
                * [3.挂载ConfigMap到文件](#3挂载configmap到文件)
+            * [实际使用例子（Redis配置）：](#实际使用例子redis配置)
          * [Secret:](#secret)
             * [创建Secret](#创建secret)
             * [使用方式：](#使用方式-1)
@@ -140,6 +141,73 @@ spec:
 > **注意：** 
 - ConfigMap必须在使用之前被创建，如果引用了一个不存在的configMap，将会导致Pod无法启动
 - ConfigMap只能被相同namespace内的应用使用。
+#### 实际使用例子（Redis配置）：
+例如当我们需要按照如下配置来启动Redis
+```
+maxmemory 2mb
+maxmemory-policy allkeys-lru
+```
+首先，让我们来创建一个ConfigMap：
+```yaml
+apiVersion: v1
+data:
+  redis-config: |
+    maxmemory 2mb
+    maxmemory-policy allkeys-lru
+kind: ConfigMap
+metadata:
+  name: example-redis-config
+  namespace: default
+```
+下面我们来创建一个Pod来使用它：
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis
+spec:
+  containers:
+  - name: redis
+    image: kubernetes/redis:v1
+    env:
+    - name: MASTER
+      value: "true"
+    ports:
+    - containerPort: 6379
+    volumeMounts:
+    - mountPath: /redis-master
+      name: config
+  volumes:
+    - name: config
+      configMap:
+        name: example-redis-config
+        items:
+        - key: redis-config
+          path: redis.conf     #指定生成的配置文件名称
+```
+当我们创建完Pod后，进入它：
+生成的配置文件如下：
+```
+redis-master
+`-- redis.conf -> ..data/redis.conf
+```
+我们发现在redis-master 目录下生成了一个文件redis.conf ，对应我们上面path定义的文件名。输出一下redis.conf内容：
+```
+maxmemory 2mb
+maxmemory-policy allkeys-lru
+```
+下面我们看一下redis的配置：
+```
+$ kubectl exec -it redis redis-cli
+127.0.0.1:6379> CONFIG GET maxmemory
+1) "maxmemory"
+2) "2097152"
+127.0.0.1:6379> CONFIG GET maxmemory-policy
+1) "maxmemory-policy"
+2) "allkeys-lru"
+```
+符合我们的预期。
+> **注意：** 虽然使用configMap可以很方便的把我们配置文件放入到容器中，但一定注意配置文件的大小，（尽量控制在1M以内）更不能滥用ConfigMap，否则可能会给apiserver和etcd造成较大压力，影响整个集群。
 
 ### Secret:
 当需要使用一些敏感的配置，比如密码，证书等信息时，建议使用Secret。
@@ -231,7 +299,7 @@ data:
 {
 	"auths": {
 		"image-test": {
-			"auth": "cm9vdDpyb290",   #  密文为"root:root"base64的结果
+			"auth": "cm9vdDpyb290",   #  密文为"root:rootbase64"的结果
 			"email": ""
 		}
 	}
