@@ -1,5 +1,4 @@
 # Kubernetes ConfigMap vs Secret 
-[ConfigMap|Secret]
 
    * [Kubernetes ConfigMap vs Secret](#kubernetes-configmap-vs-secret)
       * [场景对比](#场景对比)
