@@ -1,0 +1,261 @@
+# 聊聊Golang中的range关键字
+[TOC]
+ 
+首先让我们来看两段代码
+ 1. 下面的程序是否可以正常结束？
+
+```go
+ func main() {
+	v := []int{1, 2, 3}
+	for i := range v {
+		v = append(v, i)
+	}
+}
+```
+2. 下面的程序分别输出什么？
+```go
+func IndexArray() {
+	a := [...]int{1, 2, 3, 4, 5, 6, 7, 8}
+
+	for i := range a {
+		a[3] = 100
+		if i == 3 {
+			fmt.Println("IndexArray", i, a[i])
+		}
+	}
+}
+
+func IndexValueArray() {
+	a := [...]int{1, 2, 3, 4, 5, 6, 7, 8}
+
+	for i, v := range a {
+		a[3] = 100
+		if i == 3 {
+			fmt.Println("IndexValueArray", i, v)
+		}
+	}
+}
+
+func IndexValueArrayPtr() {
+	a := [...]int{1, 2, 3, 4, 5, 6, 7, 8}
+
+	for i, v := range &a {
+		a[3] = 100
+		if i == 3 {
+			fmt.Println("IndexValueArrayPtr", i, v)
+		}
+	}
+}
+
+func main() {
+	IndexArray()
+	IndexValueArray()
+	IndexValueArrayPtr()
+}
+```
+## 第一步 让我们阅读一下[官方文档](https://golang.org/ref/spec#For_statements)
+
+## range 变量
+
+我们应该都知道，对于 **range** 左边的循环变量可以用以下方式来赋值：
+
+等号直接赋值 (**=**)
+短变量申明赋值 (**:=**)
+当然也可以什么都不写来完全忽略迭代遍历到的值。
+
+如果使用短变量申明（:=），Go 会在每次循环的迭代中重用申明的变量（只在循环内的作用域里有效）
+表达式左边必须是可寻址的或者map索引表达式，如果表达式是channel，最多允许一个变量，其他情况下允许两个变量。
+
+## range表达式
+range 右边表达式的结果，可以是以下这些数据类型：
+
+- array
+- pointer to an array
+- slice
+- string
+- map
+- channel permitting receive operations 比如：chan int or chan<- int
+
+range 表达式会在开始循环前被 evaluated 一次。但有一个例外情况：
+
+> 如果对一个数组或者指向数组的指针做 range 并且最多只有一个变量（只用到了数组索引）：此时只有表达式长度 被 evaluated。
+
+这里的 evaluated 到底是什么意思？很不幸文档里没有找到相关的说明。当然我猜其实就是完全的执行表达式直到其不能再被拆解。无论如何，最重要的是 range 表达式 在整个迭代开始前会被完全的执行一次。那么你会怎么让一个表达式只执行一次？把执行结果放在一个变量里！ range 表达式的处理会不会也是这么做的？
+
+有趣的是规范文档里提到了一些对 maps (没有提到 slices) 做添加或删除操作的情况。
+
+如果 map 中的元素在还没有被遍历到时就被移除了，后续的迭代中这个元素就不会再出现。而如果 map 中的元素是在迭代过程中被添加的，那么在后续的迭代这个元素可能出现也可能被跳过。
+
+## 第二步 研究一下range copy
+如果我们假设在循环开始之前会先把 range 表达式复制给一个变量，那我们需要关注什么？答案是表达式结果的数据类型，让我们更近一步的看看 range 支持的数据类型。
+
+在我们开始前，先记住：在 Go 里，无论我们对什么赋值，都会被复制。如果赋值了一个指针，那我们就复制了一个指针副本。如果赋值了一个结构体，那我们就复制了一个结构体副本。往函数里传参也是同样的情况。好了，开始吧：
+```go
+Range expression                          1st value          2nd value
+
+array or slice  a  [n]E, *[n]E, or []E    index    i  int    a[i]       E
+string          s  string type            index    i  int    see below  rune
+map             m  map[K]V                key      k  K      m[k]       V
+channel         c  chan E, <-chan E       element  e  E
+```
+然而这些对于真正解决我们的问题似乎并没有太大作用！
+好，我们先看一段代码：
+```go
+func main() {
+	// 复制整个数组
+	var a [10]int
+	acopy := a
+	a[0] = 10
+	fmt.Println("a", a)
+	fmt.Println("acopy", acopy)
+	// 只复制了 slice 的结构体，并没有复制成员指针指向的数组
+	s := make([]int, 10)
+	s[0] = 10
+	scopy := s
+	fmt.Println("s", s)
+	fmt.Println("scopy", scopy)
+	// 只复制了 map 的指针
+	m := make(map[string]int)
+	mcopy := m
+	m["0"] = 10
+	fmt.Println("m", m)
+	fmt.Println("mcopy", mcopy)
+}
+```
+大家猜下这个程序的输出结果是什么，不卖关子了，直接上答案。
+```go
+a [10 0 0 0 0 0 0 0 0 0]
+acopy [0 0 0 0 0 0 0 0 0 0]
+s [10 0 0 0 0 0 0 0 0 0]
+scopy [10 0 0 0 0 0 0 0 0 0]
+m map[0:10]
+mcopy map[0:10]
+```
+所以，如果要在 range 循环开始前把一个数组表达式赋值给一个变量（保证表达式只 evaluate 一次），就会复制整个数组。
+## 第三步  真相在源码
+看下gcc[源码](https://github.com/gcc-mirror/gcc/blob/master/gcc/go/gofrontend/statements.cc)发现,我们关心的和 range 有关的部分出现在 statements.cc,下面是一段注释：
+```
+  // Arrange to do a loop appropriate for the type.  We will produce
+  //   for INIT ; COND ; POST {
+  //           ITER_INIT
+  //           INDEX = INDEX_TEMP
+  //           VALUE = VALUE_TEMP // If there is a value
+  //           original statements
+  //   }
+```
+现在终于有点眉目了。range 循环在内部实现上实际就是 C 风格循环的语法糖，意料之外而又在情理之中。编译器会对每一种 range 支持的类型做专门的 “语法糖还原”。比如，
+
+数组：
+```
+  // The loop we generate:
+  //   len_temp := len(range)
+  //   range_temp := range
+  //   for index_temp = 0; index_temp < len_temp; index_temp++ {
+  //           value_temp = range_temp[index_temp]
+  //           index = index_temp
+  //           value = value_temp
+  //           original body
+  //   }
+```
+slice:
+```
+  // The loop we generate:
+  //   for_temp := range
+  //   len_temp := len(for_temp)
+  //   for index_temp = 0; index_temp < len_temp; index_temp++ {
+  //           value_temp = for_temp[index_temp]
+  //           index = index_temp
+  //           value = value_temp
+  //           original body
+  //   }
+  //
+  // Using for_temp means that we don't need to check bounds when
+  // fetching range_temp[index_temp].
+```
+他们的共同点是：
+
+- 所有类型的 range 本质上都是 C 风格的循环
+- 遍历到的值会被赋值给一个临时变量
+## 总结：
+> - 循环变量在每一次迭代中都被赋值并会复用。
+> - 可以在迭代过程中移除一个 map 里的元素或者向 map 里添加元素。添加的元素并不一定会在后续迭代中被遍历到。
+
+现在让我们回到开篇的例子。
+1.答案是程序可以正常结束运行。它其实可以粗略的翻译成类似下面的这段：
+```go
+for_temp := v
+len_temp := len(for_temp)
+for index_temp = 0; index_temp < len_temp; index_temp++ {
+        value_temp = for_temp[index_temp]
+        index = index_temp
+        value = value_temp
+        v = append(v, index)
+}
+```
+2.先看输出结果
+
+```
+IndexArray 3 100
+IndexValueArray 3 4
+IndexValueArrayPtr 3 100
+```
+
+我们知道切片实际上是一个结构体的语法糖，这个结构体有着一个指向数组的指针成员。在循环开始前对这个结构体生成副本然后赋值给 for_temp，后面的循环实际上是在对 for_temp 进行迭代。任何对于原始变量 v 本身（而非对其背后指向的数组）的更改都和生成的副本 for_temp 没有关系。但其背后指向的数组还是以指针的形式共享给 v 和 for_temp，所以 v[i] = 1 这样的语句仍然可以工作。
+     和上面的例子类似，在循环开始前数组被赋值给了一个临时变量，在对数组做 range 循环时临时变量里存放的是整个数组的副本，对原数组的操作不会反映在副本上。而在对数组指针做 range 循环时临时变量存放的是指针的副本，操作的也是同一块内存空间。
+ 
+## 附：更深入理解
+ 下面让我们再来一个例子，看看你是否真正理解了。
+ 
+``` go
+type Foo struct {
+    bar string
+}
+func main() {
+    list := []Foo{
+        {"A"},
+        {"B"},
+        {"C"},
+    }
+    list2 := make([]*Foo, len(list))
+    for i, value := range list {
+        list2[i] = &value
+    }
+    fmt.Println(list[0], list[1], list[2])
+    fmt.Println(list2[0], list2[1], list2[2])
+}
+```
+在这个例子中，我们干了下面的一些事情：
+
+- 定义了一个叫做Foo的结构，里面有一个叫bar的field。随后，我们创建了一个基于Foo结构体的slice，名字叫list
+- 我们还创建了一个基于Foo结构体指针类型的slice，叫做list2
+- 在一个for循环中，我们试图遍历list中的每一个元素，获取其指针地址，并赋值到list2中index与之对应的位置。
+- 最后，分别输出list与list2中的每个元素
+从代码来看，理所当然，我们期望得到的结果应该是这样：
+```
+{A} {B} {C}
+&{A} &{B} &{C}
+```
+但是结果却出乎意料，程序的输出是这样的：
+
+```
+{A} {B} {C}
+&{C} &{C} &{C}
+```
+在Go的for…range循环中，Go始终使用值拷贝的方式代替被遍历的元素本身，简单来说，就是for…range中那个value，是一个值拷贝，而不是元素本身。这样一来，当我们期望用&获取元素的地址时，实际上只是取到了value这个临时变量的地址，而非list中真正被遍历到的某个元素的地址。而在整个for…range循环中，value这个临时变量会被重复使用，所以，在上面的例子中，list2被填充了三个相同的地址，其实都是value的地址。而在最后一次循环中，value被赋值为{c}。因此，list2输出的时候显示出了三个&{c}。
+
+同样的，下面的写法，跟for…range的例子如出一辙：
+```go
+var value Foo
+for var i := 0; i < len(list); i++ {
+    value = list[i]
+    list2[i] = &value
+}
+```
+那么，怎样才是正确的写法呢？我们应该用index来访问for…range中真实的元素，并获取其指针地址：
+
+```go
+for i, _ := range list {
+    list2[i] = &list[i]
+}
+```
+这样，输出list2中的元素，就能得到我们想要的结果(&{A} &{B} &{C})了。
